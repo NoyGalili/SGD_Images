@@ -139,7 +139,7 @@ if __name__ == '__main__':
     A_init = mean_img
 
     # ✅ Run estimation with optimized functions
-    A_est = estimate_transformations(images, A_init, epochs=20)
+    A_est = estimate_transformations(images, A_init, epochs=60)
 
     # ✅ Display result
     figure, axis = plt.subplots(1, 2)
