@@ -83,7 +83,8 @@ def comput_PDF(x, y, image_size):
 def loss_function(X_list, A_est, angles, linex, liney, PDF):
     """Compute loss function between transformed A and X_list images."""
     sigma = 0.1
-    loss = torch.tensor(0.0, dtype=torch.float32, device=A_est.device)  # ✅ Fixed loss initialization
+    loss = torch.tensor([0], dtype=torch.float32, device=A_est.device)
+
     num_images = len(X_list)
 
     rotated_images = [TF.rotate(A_est.unsqueeze(0), angle=float(angle * (180 / torch.pi))) for angle in
