@@ -4,28 +4,28 @@ import torch
 import matplotlib.pyplot as plt
 import random
 import torchvision.transforms.functional as TF
-
+import torch.distributions as dist
 
 def estimate_transformations(X_list, A_init, lr=0.001, epochs=50, batch_size=5):
     """Estimate transformations using PyTorch SGD optimization with mini-batch training."""
     num_images = len(X_list)
-    theta = torch.nn.Parameter(torch.tensor(A_init, dtype=torch.float32))  # ✅ Ensure A_est is trainable
+
+    A_est = torch.nn.Parameter(torch.tensor(A_init, dtype=torch.float32))
+
     print("Start SGD")
-
-    # ✅ Reduce K (number of angles) to save computation
-    K = 360  # Reduced from 360 for faster computation
-    angles = torch.linspace(0, 2 * torch.pi, K, device=theta.device)
-
-    linex = torch.linspace(-30, 30, 60, device=theta.device)  # ✅ Reduce translation steps
-    liney = torch.linspace(-30, 30, 60, device=theta.device)
-
+    K = 360
+    angles = torch.linspace(0, 2 * torch.pi, K, device=A_est.device)
+    pixels = int(0.1 * A_init.shape[0])
+    linex = torch.linspace(-pixels, pixels, 2*pixels, device=A_est.device)
+    liney = torch.linspace(-pixels, pixels, 2*pixels, device=A_est.device)
+    lineScale = torch.linspace(0.1, 1, 5, device=A_est.device)
     PDF = comput_PDF(linex, liney, A_init.shape[0])
-
-    optimizer = torch.optim.SGD([theta], lr=lr, momentum=0.5)
+    p_scale = prior_scale(lineScale)
+    optimizer = torch.optim.SGD([A_est], lr=lr, momentum=0.4)
 
     min_loss = float('inf')
     best_A = None
-
+    step_best = 0
     for step in range(epochs):
         print(f"Epoch {step}")
         optimizer.zero_grad()
@@ -33,7 +33,7 @@ def estimate_transformations(X_list, A_init, lr=0.001, epochs=50, batch_size=5):
         batch_indices = random.sample(range(num_images), batch_size)
         batch_X = [X_list[j] for j in batch_indices]
 
-        loss = loss_function(batch_X, theta, angles, linex, liney, PDF)
+        loss = loss_function(batch_X, A_est, angles, linex, liney,lineScale, p_scale,  PDF)
 
         loss.backward()
         optimizer.step()
@@ -41,12 +41,21 @@ def estimate_transformations(X_list, A_init, lr=0.001, epochs=50, batch_size=5):
         with torch.no_grad():
             if loss.item() < min_loss:
                 min_loss = loss.item()
-                best_A = theta.clone()
+                best_A = A_est.clone()
+                step_best = step
 
         print(f"Step {step}: loss = {loss.item()}")
-
+    print(f"Step best{step_best}: loss = {min_loss}")
     return best_A.detach()
 
+def prior_scale (lineScale):
+    alpha = 2
+    beta_param = 5
+
+    # Create a Beta distribution using PyTorch
+    beta_dist = dist.Beta(alpha, beta_param)
+
+    return beta_dist.log_prob(lineScale)
 
 def apply_transformation(image, rotation, translation=(0, 0), scale=1.0):
     """Apply rotation, translation, and scaling properly."""
@@ -65,67 +74,57 @@ def apply_transformation(image, rotation, translation=(0, 0), scale=1.0):
 
 def comput_PDF(x, y, image_size):
     """Precompute a 2D probability density function (PDF)."""
-    sigma_ = 0.05 * image_size**2
-    mu_x, sigma_x = 0, sigma_
-    mu_y, sigma_y = 0, sigma_
+    sigma_ = torch.tensor((0.05 * image_size)**2, dtype=torch.float32)
 
-    # Ensure x and y are on the correct device
-    x = x.to(y.device)
-
-    # ✅ Call meshgrid correctly
-    X, Y = torch.meshgrid(x, y, indexing='ij')  # Remove `indexing='ij'` if using older PyTorch
-
-    pdf_x = (1 / (sigma_x * torch.sqrt(torch.tensor(2 * torch.pi, device=X.device)))) * torch.exp(-0.5 * ((X - mu_x) **2 / sigma_x) )
-    pdf_y = (1 / (sigma_y * torch.sqrt(torch.tensor(2 * torch.pi, device=X.device)))) * torch.exp(-0.5 * ((Y - mu_y) **2 / sigma_y) )
-
-    return pdf_x * pdf_y
+    PDF = torch.zeros((len(x), len(y)), dtype=torch.float32)
+    for x_i, y_i in zip(range(len(x)), range(len(y))):
+        PDF[x_i, y_i] = (x[x_i]**2 + y[y_i]**2)/(2*sigma_)
 
 
-def loss_function(X_list, A_est, angles, linex, liney, PDF):
+    return PDF
+
+
+def loss_function(X_list, A_est, angles, linex, liney,lineScale, p_scale,  PDF):
     """Compute loss function between transformed A and X_list images."""
     sigma = 0.1
-    loss = torch.tensor(0.0, dtype=torch.float32, device=A_est.device)
+    loss = torch.tensor([0], dtype=torch.float32, device=A_est.device)
+
     num_images = len(X_list)
 
-    image_sizes = A_est.shape
-    best_transforms = []
-
-    # ✅ Precompute rotations for speed
-    rotated_images = [TF.rotate(A_est.unsqueeze(0), angle=float(angle * (180 / torch.pi))) for angle in angles]
-
+    rotated_images = [TF.rotate(A_est.unsqueeze(0), angle=float(angle * (180 / torch.pi))) for angle in
+                      angles]
     for i in range(num_images):
         t2 = torch.tensor(np.array(X_list[i]), dtype=torch.float32, device=A_est.device).unsqueeze(0)
 
         min_loss = float('inf')
-        best_transform = None
 
-        for rotated_A in rotated_images:
+        for transformed_A in rotated_images:
             for x, y in zip(linex, liney):
-                x_idx = torch.clamp(x, 0, PDF.shape[0] - 1).long()
-                y_idx = torch.clamp(y, 0, PDF.shape[1] - 1).long()
+                x_idx = torch.clamp(x - linex.min(), 0, PDF.shape[0] - 1).long()
+                y_idx = torch.clamp(y - liney.min(), 0, PDF.shape[1] - 1).long()
 
-                # ✅ Shift image only once per transformation
-                shifted_A = torch.roll(rotated_A, shifts=(int(x), int(y)), dims=(1, 2))
+                shifted_A = torch.roll(transformed_A, shifts=(int(x.item()), int(y.item())), dims=(1, 2))
+                for scale in lineScale:
+                    scale_id = torch.clamp(scale - lineScale.min(), 0, p_scale.shape[0] - 1).long()
 
-                # ✅ Faster loss computation
-                a = (1 / sigma ** 2) * torch.linalg.matrix_norm((t2 - shifted_A)) ** 2
-                a += PDF[x_idx, y_idx]
+                    scaled_A = TF.affine(shifted_A, angle=0, translate=[0, 0], scale=scale.item(), shear=[0, 0])
 
-                if a < min_loss:
-                    min_loss = a
-                    best_transform = shifted_A
+                    a = (1 / sigma ** 2) * torch.linalg.matrix_norm((t2 - normalize(scaled_A))) ** 2
+                    a += PDF[x_idx, y_idx]
+                    a += p_scale[scale_id]
 
-        best_transforms.append(best_transform)
-        loss =loss + min_loss  # Use best match per image
+                    if a < min_loss:
+                        min_loss = a
 
-    return loss  # ✅ Return a scalar loss
+        loss += min_loss
+    return loss
 
 
-def Get_data():
+def Get_data(image_name):
     """Load and normalize dataset."""
     arr = []
     for i in range(100):
-        img = mrcfile.read(f'/mnt/c/Users/noyga/PycharmProjects/SGD_Images/output/pikacho-S{i}.mrc')
+        img = mrcfile.read(f'/mnt/c/Users/noyga/PycharmProjects/SGD_Images/output/{image_name + str(i)}.mrc')
         arr.append(normalize(img))
 
     return arr
@@ -133,26 +132,30 @@ def Get_data():
 
 def normalize(tensor):
     """Normalize a tensor to [0,1] range."""
-    return (tensor - tensor.min()) / (tensor.max() - tensor.min())
+    max =tensor.max()
+    min = tensor.min()
+    if max > 1 or min < 0:
+        return (tensor - min) / (max - min)
+    return tensor
 
 
 if __name__ == '__main__':
-    images = Get_data()
+    image_name = 'pikacho-S'
+    A_original = plt.imread(image_name+ ".png")
+    images = Get_data(image_name)
 
     data = images.copy()
     stack = np.stack(data, axis=0)
 
     mean_img = normalize(np.mean(stack, axis=0))
-    A_init = images[0]
+    A_init = mean_img
 
-    # ✅ Run estimation with optimized functions
-    A_est = estimate_transformations(images, A_init, epochs=100)
+    A_est = estimate_transformations(images, A_init, epochs=10)
 
-    # ✅ Display result
     figure, axis = plt.subplots(1, 2)
     A = A_est.squeeze(0)
 
-    axis[0].imshow(A_init, cmap='gray')
+    axis[0].imshow(A_original, cmap='gray')
     axis[1].imshow(A, cmap='gray')
 
     plt.show()
