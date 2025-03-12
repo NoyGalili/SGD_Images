@@ -9,7 +9,7 @@ def apply_transformation(image, rotation, translation, scale):
     """Apply transformation (rotation, translation, scale) to an image without resizing incorrectly."""
     transformed_image = ndimage.rotate(image, np.degrees(rotation), reshape=False, mode='nearest')
     transformed_image = ndimage.shift(transformed_image, shift=translation, mode='nearest')
-    transformed_image = ndimage.sca
+
 
     # Crop or pad to maintain shape consistency
     output_shape = image.shape
@@ -49,4 +49,4 @@ def create_images (image_name):
 
 # Example usage
 if __name__ == "__main__":
-    create_images('pikacho-S')
+    create_images('stitch-S')
