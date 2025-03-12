@@ -46,32 +46,45 @@ import torch.nn.functional as F
 
 def estimate_transformations(X_list, A_init, lr=0.001, epochs=50, batch_size=5):
     """Estimate transformations using PyTorch SGD optimization with mini-batch training."""
+
     num_images = len(X_list)
     sigma = 0.1
-    A_est = torch.nn.Parameter(torch.tensor(A_init, dtype=torch.float32, requires_grad = True))
+    A_est = torch.nn.Parameter(torch.tensor(A_init, dtype=torch.float32, requires_grad=True))
+
     sigma_moves = torch.tensor(0.05 * np.shape(A_init)[0], dtype=torch.float32)
     print("Start SGD")
-    K = 180
+
+    K = 360
     angles = torch.linspace(0, 2 * torch.pi, K, device=A_est.device)
+
     pixels = int(0.1 * A_init.shape[0])
     linex = torch.linspace(-pixels, pixels, pixels, device=A_est.device)
     liney = torch.linspace(-pixels, pixels, pixels, device=A_est.device)
+
+    # Compute PDF correctly
     PDF = comput_PDF(linex, liney, A_init.shape[0], sigma_moves)
+
     optimizer = torch.optim.SGD([A_est], lr=lr, momentum=0.6)
-    J = np.shape(A_init)[0]*np.shape(A_init)[1]
-    Const_in_loss = (J * torch.log(1 / (sigma * torch.sqrt(torch.tensor(2, dtype=torch.float32) * torch.pi) )) +
-                     (2*torch.log(1/(2*sigma_moves*torch.pi)))) +torch.log(2 * torch.pi / torch.tensor(K))
+
+    J = np.shape(A_init)[0] * np.shape(A_init)[1]
+    Const_in_loss = (
+            J * torch.log(1 / (sigma * torch.sqrt(torch.tensor(2, dtype=torch.float32) * torch.pi))) +
+            (2 * torch.log(1 / (2 * sigma_moves * torch.pi))) +
+            torch.log(2 * torch.pi / torch.tensor(K, dtype=torch.float32))
+    )
 
     min_loss = float('inf')
     best_A = None
     step_best = 0
+
     for step in range(epochs):
         print(f"Epoch {step}")
         optimizer.zero_grad()
 
         batch_indices = random.sample(range(num_images), batch_size)
         batch_X = [X_list[j] for j in batch_indices]
-        loss = loss_function(batch_X, A_est, angles, linex, liney,PDF,sigma,Const_in_loss,K, pixels)
+
+        loss = loss_function(batch_X, A_est, angles, linex, liney, PDF, sigma, Const_in_loss, K, pixels)
 
         loss.backward()
         optimizer.step()
@@ -83,7 +96,8 @@ def estimate_transformations(X_list, A_init, lr=0.001, epochs=50, batch_size=5):
                 step_best = step
 
         print(f"Step {step}: loss = {loss.item()}")
-    print(f"Step best{step_best}: loss = {min_loss}")
+
+    print(f"Step best {step_best}: loss = {min_loss}")
     return best_A.detach()
 
 
@@ -94,7 +108,7 @@ def comput_PDF(x, y, image_size, sigma_):
 
     PDF = torch.zeros((len(x), len(y)), dtype=torch.float32)
     for x_i, y_i in zip(range(len(x)), range(len(y))):
-        PDF[x_i, y_i] = (x[x_i]**2 + y[y_i]**2)/(2*sigma_)
+        PDF[x_i, y_i] = (x[x_i]**2 + y[y_i]**2)/(2*sigma_**2)
 
 
     return PDF
@@ -129,32 +143,37 @@ def comput_PDF(x, y, image_size, sigma_):
 #         loss += (torch.logsumexp(E, dim=(0, 1, 2)).detach())
 #     return Const_in_loss + loss
 
-
-def loss_function(X_list, A_est, angles, linex, liney,  PDF, sigma,Const_in_loss,K,pixel):
+def loss_function(X_list, A_est, angles, linex, liney, PDF, sigma, Const_in_loss, K, pixel):
     """Compute loss function between transformed A and X_list images."""
+
+    loss = torch.tensor([0], dtype=torch.float32, device=A_est.device)  # Prevent log(0)
     a_list = []
-    loss = torch.tensor([0], dtype=torch.float32, device=A_est.device)
 
     num_images = len(X_list)
-    rotated_images = [TF.rotate(A_est.unsqueeze(0), angle=float(angle * (180 / torch.pi))) for angle in
-                      angles]
+    rotated_images = [TF.rotate(A_est.unsqueeze(0), angle=float(angle * (180 / torch.pi)),
+                                interpolation=TF.InterpolationMode.BILINEAR) for angle in angles]
 
     for i in range(num_images):
         t2 = torch.tensor(np.array(X_list[i]), dtype=torch.float32, device=A_est.device).unsqueeze(0)
 
         for transformed_A in rotated_images:
             for x, y in zip(linex, liney):
-                a = torch.tensor([0], dtype=torch.float32, device=A_est.device)
                 x_idx = torch.clamp(x - linex.min(), 0, PDF.shape[0] - 1).long()
                 y_idx = torch.clamp(y - liney.min(), 0, PDF.shape[1] - 1).long()
 
+                # Apply shift
                 shifted_A = torch.roll(transformed_A, shifts=(int(x.item()), int(y.item())), dims=(1, 2))
-                a += (
-                          (1 / (2 * sigma ** 2)) * torch.linalg.matrix_norm((t2 - shifted_A)) ** 2)
-                a += (PDF[x_idx, y_idx])
+
+                # Compute term inside log-sum-exp
+                norm_diff = torch.linalg.matrix_norm((t2 - shifted_A)) ** 2
+                a = (-norm_diff / (2 * sigma ** 2)) - PDF[x_idx, y_idx]
                 a_list.append(a)
+
+    # Convert to tensor and apply logsumexp safely
     a_stack = torch.stack(a_list)
-    loss += torch.logsumexp(a_stack, 0)
+    #min_val = torch.min(a_stack)
+    loss = torch.logsumexp(a_stack, dim=0)
+
     return Const_in_loss + loss
 
 
@@ -188,7 +207,7 @@ if __name__ == '__main__':
     mean_img = normalize(np.mean(stack, axis=0))
     A_init = mean_img
 
-    A_est = estimate_transformations(images, A_init, epochs=60)
+    A_est = estimate_transformations(images, A_init, epochs=20)
 
     figure, axis = plt.subplots(1, 2)
     A = A_est.squeeze(0)
