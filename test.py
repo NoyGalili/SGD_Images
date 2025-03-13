@@ -49,4 +49,4 @@ def create_images (image_name):
 
 # Example usage
 if __name__ == "__main__":
-    create_images('stitch-S')
+    create_images('simple')
