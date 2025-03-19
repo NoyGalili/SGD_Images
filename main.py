@@ -197,7 +197,7 @@ def normalize(tensor):
 
 
 if __name__ == '__main__':
-    image_name = 'pikacho-S'
+    image_name = 'pikacho2'
     A_original = plt.imread(image_name+ ".png")
     images = Get_data(image_name)
 

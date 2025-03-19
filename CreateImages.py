@@ -9,7 +9,7 @@ def apply_transformation(image, rotation, translation, scale):
     """Apply transformation (rotation, translation, scale) to an image without resizing incorrectly."""
     transformed_image = ndimage.rotate(image, np.degrees(rotation), reshape=False, mode='nearest')
     transformed_image = ndimage.shift(transformed_image, shift=translation, mode='nearest')
-
+    transformed_image = scale*transformed_image
 
     # Crop or pad to maintain shape consistency
     output_shape = image.shape
@@ -47,6 +47,7 @@ def create_images (image_name):
             mrc.set_data(data)
         print("Saved image path:", os.path.abspath(name))
 
+
 # Example usage
 if __name__ == "__main__":
-    create_images('simple')
+    create_images('pikacho2')
