@@ -14,41 +14,55 @@ def normalize(tensor):
 def Calculate_linespaces (current_pose, step,img_size, A_est):
     pixels = int(0.05 * img_size)
     p = int(pixels / 2)
-    lineScale = torch.linspace(0.8, 1.2, 3, device=A_est.device)
     if step == 0:
-        K = 90
+        K = 100
         angles = torch.linspace(0, 2 * torch.pi, K, device=A_est.device)
         linex = torch.linspace(-pixels, pixels, p, device=A_est.device).round().int()
         liney = torch.linspace(-pixels, pixels, p, device=A_est.device).round().int()
+        lineScale = torch.linspace(0.8, 1.2, 2, device=A_est.device)
 
     elif step == 1:
-        K = 45
+        K = 60
         angles = torch.linspace(current_pose[0] - torch.pi/2, current_pose[0] + torch.pi/2, K, device=A_est.device)
         linex = torch.linspace(current_pose[1] - pixels / 2, current_pose[1] + pixels / 2, p, device=A_est.device).round().int()
         liney = torch.linspace(current_pose[2] - pixels / 2, current_pose[2] + pixels / 2, p, device=A_est.device).round().int()
+        lineScale = torch.linspace(current_pose[3]-0.1, current_pose[3]+0.1, 3, device=A_est.device)
 
     elif step<=3:
-        K = 90
+        K = 45
         p = int(p / 2)
 
         angles = torch.linspace(current_pose[0] - torch.pi/4, current_pose[0] + torch.pi/4, K, device=A_est.device)
         linex = torch.linspace(int(current_pose[1]-pixels/4), int(current_pose[1]+pixels/4), p, device=A_est.device).round().int()
         liney = torch.linspace(int(current_pose[2]-pixels/4), int(current_pose[2]+pixels/4), p, device=A_est.device).round().int()
-        lineScale = torch.linspace(0.8, 1.2, 3, device=A_est.device)
+        lineScale = torch.linspace(current_pose[3]-0.1, current_pose[3]+0.1, 3, device=A_est.device)
     elif step <=8:
-        K = 45
+        K = 22
         p = int(p/2)
         angles = torch.linspace(current_pose[0] - torch.pi/8, current_pose[0] + torch.pi/8, K, device=A_est.device)
         linex = torch.linspace(int(current_pose[1]-pixels/8),int (current_pose[1]+pixels/8), p, device=A_est.device).round().int()
         liney = torch.linspace(int(current_pose[2]-pixels/8), int(current_pose[2]+pixels/8),  p, device=A_est.device).round().int()
-    else:
+        lineScale = torch.linspace(current_pose[3] - 0.05, current_pose[3] + 0.05, 3, device=A_est.device)
+    elif step <=25:
         K = 22
-        p = int(p / 2)
+        p = int(p / 4)
         angles = torch.linspace(current_pose[0] - torch.pi / 16, current_pose[0] + torch.pi / 16, K, device=    A_est.device)
         linex = torch.linspace(int(current_pose[1] - pixels / 16), int(current_pose[1] + pixels / 16), p,
                                device=A_est.device).round().int()
         liney = torch.linspace(int(current_pose[2] - pixels / 16), int(current_pose[2] + pixels / 16), p,
                                device=A_est.device).round().int()
+        lineScale = torch.linspace(current_pose[3] - 0.05, current_pose[3] + 0.05, 3, device=A_est.device)
+
+    else:
+        K = 10
+        p = int(p / 4)
+        angles = torch.linspace(current_pose[0] - torch.pi / 32, current_pose[0] + torch.pi / 32, K,
+                                device=A_est.device)
+        linex = torch.linspace(int(current_pose[1] - pixels / 16), int(current_pose[1] + pixels / 16), p,
+                               device=A_est.device).round().int()
+        liney = torch.linspace(int(current_pose[2] - pixels / 16), int(current_pose[2] + pixels / 16), p,
+                               device=A_est.device).round().int()
+        lineScale = torch.linspace(current_pose[3] - 0.05, current_pose[3] + 0.05, 3, device=A_est.device)
 
 
 
