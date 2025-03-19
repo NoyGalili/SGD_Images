@@ -43,7 +43,7 @@ def Calculate_linespaces (current_pose, step,img_size, A_est):
         liney = torch.linspace(int(current_pose[2]-pixels/8), int(current_pose[2]+pixels/8),  p, device=A_est.device).round().int()
     else:
         K = 22
-        p = int(p / 4)
+        p = int(p / 2)
         angles = torch.linspace(current_pose[0] - torch.pi / 16, current_pose[0] + torch.pi / 16, K, device=    A_est.device)
         linex = torch.linspace(int(current_pose[1] - pixels / 16), int(current_pose[1] + pixels / 16), p,
                                device=A_est.device).round().int()

@@ -30,7 +30,7 @@ def estimate_transformations(image_name, A_init, lr=0.001, epochs=50, batch_size
     total_loss = 0
     for e in range(epochs):
         print(e)
-        if step_total_loss != 0 and abs(total_loss - step_total_loss) / abs(step_total_loss) < 1e-4:
+        if step_total_loss != 0 and abs(total_loss - step_total_loss) / abs(step_total_loss) < 1e-5:
             return A_est.detach()
         step_total_loss = total_loss
         total_loss = 0
@@ -71,9 +71,6 @@ def loss_function(X_list, A_est, sigma, Const_in_loss, step, img_size, sigma_mov
     img_num = 0
     for I in X_list:
         [angles, linex, liney, lineScale, K, p] = t.Calculate_linespaces(best_poses[img_num], step, img_size, A_est)
-        with torch.no_grad():
-            PDF_Moves = comput_PDF_Moves(linex, liney, sigma_moves)
-            PDF_Scale = comput_PDF_Scale(lineScale, alpha.item(), beta.item())
         Const_in_loss += (2 * torch.log(1 / torch.tensor(p, dtype=torch.float32)) +
                           torch.log(2 * torch.pi / torch.tensor(K, dtype=torch.float32)) +
                           torch.log(1 / torch.tensor(3, dtype=torch.float32))
@@ -90,15 +87,14 @@ def loss_function(X_list, A_est, sigma, Const_in_loss, step, img_size, sigma_mov
         index_angle = 0
         for transformed_A in rotated_images:
             for x in linex:
-                x_shift = int(torch.clamp(x - linex.min(), 0, PDF_Moves.shape[0] - 1).item())
                 for y in liney:
-                    y_shift = int(torch.clamp(y - liney.min(), 0, PDF_Moves.shape[1] - 1).item())
                     shifted_A = torch.roll(transformed_A, shifts=(int(x.item()), int(y.item())), dims=(1, 2))
                     for scale in lineScale:
-                        scale_idx = int(torch.clamp(scale - lineScale.min(), 0, PDF_Scale.shape[0] - 1).item())
                         scaled_A = scale * shifted_A
                         norm_diff = torch.linalg.matrix_norm(t2 - scaled_A) ** 2
-                        a = (-norm_diff / (2 * sigma ** 2)) - PDF_Moves[x_shift, y_shift] + PDF_Scale[scale_idx]
+                        a = ((-norm_diff / (2 * sigma ** 2)) -
+                             ((x ** 2 + y ** 2) / (2 * sigma_moves ** 2)) +
+                             torch.log((scale ** (alpha - 1)) * ((1 - scale) ** (beta - 1))))
                         norm_diffs.append(a.clone())
                         if abs(a) < min_value:
                             min_value = abs(a)
@@ -120,7 +116,7 @@ if __name__ == '__main__':
     #image_name = input('Enter image name:')
     start = time.time()
     image_name = 'pikacho2'
-    total_samples = 50
+    total_samples = 100
     data = t.get_data_list(range(total_samples), image_name)
     A_init = t.get_mean_img(total_samples, image_name)
     gc.collect()
@@ -128,7 +124,7 @@ if __name__ == '__main__':
     # epochs = input("Enter number of epochs: (Recommended 50):")
     # batch_size = input("Enter batch size: (Recommended 2 for small CPU):")
     lr = 0.0001
-    A_est = estimate_transformations(image_name, A_init,lr = lr, epochs=100, batch_size= 1,total_samples = total_samples)
+    A_est = estimate_transformations(image_name, A_init,lr = lr, epochs=50, batch_size= 1,total_samples = total_samples)
 
     figure, axis = plt.subplots(1, 2)
     A = A_est.squeeze(0)
