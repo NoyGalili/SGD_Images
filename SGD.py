@@ -6,6 +6,7 @@ import torchvision.transforms.functional as TF
 import gc
 import tools as t
 import time
+from torch.optim.lr_scheduler import OneCycleLR
 
 def calculate_const(A_init, sigma, sigma_moves, alpha, beta):
     J = np.shape(A_init)[0] * np.shape(A_init)[1]
@@ -15,7 +16,8 @@ def calculate_const(A_init, sigma, sigma_moves, alpha, beta):
             torch.log(torch.lgamma(alpha).exp() * torch.lgamma(beta).exp() / torch.lgamma(alpha + beta).exp())
     )
 def estimate_transformations(image_name, A_init, lr=0.001, epochs=50, batch_size=2, sigma=0.1, total_samples=50):
-    """Optimized transformation estimation with mini-batch SGD."""
+    """Optimized transformation estimation with mini-batch Stochastic Gradient Descent (SGD).
+    This function estimates a transformation matrix `A_est` by iteratively minimizing a loss function."""
     A_est = torch.nn.Parameter(torch.tensor(A_init, dtype=torch.float32, requires_grad=True))
     img_size = A_init.shape[0]
     best_poses = [[0,0,0,1]] * total_samples
@@ -25,16 +27,16 @@ def estimate_transformations(image_name, A_init, lr=0.001, epochs=50, batch_size
     beta = torch.tensor(5, dtype=torch.float32)
     Const_in_loss = calculate_const(A_init, sigma, sigma_moves, alpha, beta)
     optimizer = torch.optim.SGD([A_est], lr=lr, momentum=0.6)
-
+    a = int(total_samples / batch_size)
     step_total_loss = 0
     total_loss = 0
     for e in range(epochs):
         print(e)
-        if step_total_loss != 0 and abs(total_loss - step_total_loss) / abs(step_total_loss) < 1e-5:
+        if step_total_loss != 0 and abs(total_loss - step_total_loss) / abs(step_total_loss) < 1e-4:
             return A_est.detach()
         step_total_loss = total_loss
         total_loss = 0
-        for step in range(int(total_samples / batch_size)):
+        for step in range(a):
             optimizer.zero_grad()
             batch_X = t.get_data_list(range(step*batch_size , (step+1)*batch_size), image_name)
             Pose_X = best_poses[step*batch_size : (step+1)*batch_size]
@@ -48,24 +50,31 @@ def estimate_transformations(image_name, A_init, lr=0.001, epochs=50, batch_size
 
             total_loss += (loss.item() / total_samples)
 
-    return A_est.clone().detach()
+    return t.normalize(A_est.clone().detach())
 
 
-def comput_PDF_Scale(x, alpha, beta):
-    """Precompute a 2D probability density function (PDF)."""
-    PDF = torch.log((x ** (alpha - 1)) * ((1 - x) ** (beta - 1)))
-    return PDF
-
-def comput_PDF_Moves(x, y, sigma_):
-    """Precompute a 2D probability density function (PDF) using broadcasting."""
-    X, Y = torch.meshgrid(x, y, indexing='ij')
-    PDF = (X ** 2 + Y ** 2) / (2 * sigma_ ** 2)
-    return PDF
 
 def loss_function(X_list, A_est, sigma, Const_in_loss, step, img_size, sigma_moves, alpha, beta, best_poses):
-    """Compute loss function using optimized transformations."""
+    """Compute loss function using optimized transformations.
 
+    This function estimates the transformation loss by comparing transformed versions
+    of `A_est` with images in `X_list`, considering rotations, translations, and scaling.
 
+    Args:
+        X_list (list): List of input images.
+        A_est (torch.Tensor): Current estimated transformation matrix.
+        sigma (float): Standard deviation for Gaussian likelihood.
+        Const_in_loss (torch.Tensor): Precomputed normalization constants.
+        step (int): Current training step (affects transformation search space).
+        img_size (int): Size of the input images.
+        sigma_moves (torch.Tensor): Standard deviation for translation.
+        alpha (torch.Tensor): Beta distribution parameter (scaling prior).
+        beta (torch.Tensor): Beta distribution parameter (scaling prior).
+        best_poses (list): Previously estimated best transformation poses.
+
+    Returns:
+        tuple: (loss value, list of best transformation parameters for each image)
+    """
     loss = torch.tensor(0.0, dtype=torch.float32, device=A_est.device)
     min_pose = []
     img_num = 0
@@ -100,9 +109,6 @@ def loss_function(X_list, A_est, sigma, Const_in_loss, step, img_size, sigma_mov
                             min_value = abs(a)
                             tmp_pose = [angles[index_angle],x,y,scale]
             index_angle += 1
-        if (norm_diffs == []):
-            print()
-
         norm_diffs = torch.stack(norm_diffs)
         max_val = torch.max(norm_diffs)
         min_pose.append(tmp_pose)
@@ -111,20 +117,18 @@ def loss_function(X_list, A_est, sigma, Const_in_loss, step, img_size, sigma_mov
     return [loss, min_pose]
 
 
-
-if __name__ == '__main__':
-    #image_name = input('Enter image name:')
+def runAlgo(lr, sigma, epochs, batch_size, image_name, total_samples):
     start = time.time()
-    image_name = 'pikacho2'
-    total_samples = 100
-    data = t.get_data_list(range(total_samples), image_name)
+
+    data = t.get_data_list([8], image_name)[0]
     A_init = t.get_mean_img(total_samples, image_name)
     gc.collect()
     # lr = input("Enter learning rate: (Recommended value: (0.001-0.004) higher for less details images):")
     # epochs = input("Enter number of epochs: (Recommended 50):")
     # batch_size = input("Enter batch size: (Recommended 2 for small CPU):")
-    lr = 0.0001
-    A_est = estimate_transformations(image_name, A_init,lr = lr, epochs=50, batch_size= 1,total_samples = total_samples)
+
+    A_est = estimate_transformations(image_name, A_init, lr=lr, epochs=epochs, batch_size=batch_size, sigma=sigma,
+                                     total_samples=total_samples)
 
     figure, axis = plt.subplots(1, 2)
     A = A_est.squeeze(0)
@@ -132,9 +136,12 @@ if __name__ == '__main__':
 
     print(f"Runtime: {end - start:.4f} seconds")
 
-    axis[0].set(title="Data example")
-    axis[0].imshow(A_init, cmap='gray')
+    axis[0].set(title="Data example1")
+    axis[0].imshow(data, cmap='gray')
     axis[1].set(title=f"Output: {lr}")
-    axis[1].imshow(A, cmap='gray')
-
+    axis[1].imshow(A_est, cmap='gray')
     plt.show()
+
+if __name__ == '__main__':
+    runAlgo(0.001, 0.1, 50, 1, 'pikacho-S-0.1-', 100)
+
