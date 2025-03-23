@@ -23,9 +23,8 @@ def apply_transformation(image, rotation, translation, scale):
 
 
 
-def create_images (image_name):
+def create_images (image_name, sigma):
     num_images = 100
-    sigma = 0.1
 
     # Generate synthetic images
     A_true = plt.imread(image_name + '.png')  # True underlying image
@@ -34,12 +33,12 @@ def create_images (image_name):
     if len(A_true.shape) == 3:
         A_true = np.dot(A_true[..., :3], [0.2989, 0.5870, 0.1140])
     X_list = []
-
+    image_name = image_name +"-"+str(sigma)+"-"
     for i in range(num_images):
         rotation = np.random.uniform(0, 2 * np.pi)
         translation = np.random.normal(0, 0.05 * image_size, size=2)
         scale = 5 * beta.rvs(2, 5)
-        name = '/mnt/c/Users/noyga/PycharmProjects/SGD_Images/output/' + image_name + str(i) +'.mrc'
+        name = f'./output/{image_name + str(i)}.mrc'
         X_list.append(
             apply_transformation(A_true, rotation, translation, scale) + sigma * np.random.randn(image_size, image_size))
         data = X_list[i].astype(np.float32)
@@ -50,4 +49,11 @@ def create_images (image_name):
 
 # Example usage
 if __name__ == "__main__":
-    create_images('pikacho2')
+    #create_images('pikacho2', 0.1)
+    create_images('smalldog', 0.1)
+    # create_images('pikacho2', 0.2)
+    # create_images('pikacho2', 0.5)
+    # create_images('pikacho2', 0.8)
+  #  create_images('stitch-S', 0.1)
+   # create_images('stitch-S', 0.5)
+    #create_images('stitch', 0.1)

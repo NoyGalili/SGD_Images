@@ -6,7 +6,6 @@ import torchvision.transforms.functional as TF
 import gc
 import tools as t
 import time
-from torch.optim.lr_scheduler import OneCycleLR
 
 def calculate_const(A_init, sigma, sigma_moves, alpha, beta):
     J = np.shape(A_init)[0] * np.shape(A_init)[1]
@@ -143,5 +142,9 @@ def runAlgo(lr, sigma, epochs, batch_size, image_name, total_samples):
     plt.show()
 
 if __name__ == '__main__':
-    runAlgo(0.001, 0.1, 50, 1, 'pikacho-S-0.1-', 100)
+
+    runAlgo(0.001, 0.1, 100, 1, 'smalldog-0.1-', 100)
+    # runAlgo(0.001, 0.2, 500, 1, 'pikacho2-0.2-', 100)
+    # runAlgo(0.001, 0.5, 500, 1, 'pikacho2-0.5-', 100)
+    # runAlgo(0.001, 0.8, 500, 1, 'pikacho2-0.8-', 100)
 

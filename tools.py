@@ -1,6 +1,7 @@
 import torch
 import mrcfile
 import numpy as np
+import Config as C
 
 def normalize(tensor):
     """Normalize a tensor to [0,1] range."""
@@ -27,20 +28,20 @@ def Calculate_linespaces(current_pose, step, img_size, A_est):
     Returns:
         list: A list containing angles, linex, liney, lineScale, K (number of angles), and p (number of positions).
     """
-    pixels = int(0.06 * img_size)  # Calculate the number of pixels (6% of image size)
+    pixels = int(C.pixel_range * img_size)  # Calculate the number of pixels (6% of image size)
     p = int(pixels / 2)  # Initial half pixel range
     lineScale = torch.linspace(0.8, 1.2, 3, device=A_est.device)  # Initial scaling range
 
     if step == 0:
         # Initial step: Full 360-degree search
-        K = 90
+        K = C.K_angles.K1.value
         angles = torch.linspace(0, 2 * torch.pi, K, device=A_est.device)
         linex = torch.linspace(-pixels, pixels, p, device=A_est.device).round().int()
         liney = torch.linspace(-pixels, pixels, p, device=A_est.device).round().int()
 
     elif step == 1:
         # Step 1: Reduce search to 180 degrees around the current angle
-        K = 90
+        K = C.K_angles.K1.value
         p = int(p / 2)  # Reduce pixel range
         angles = torch.linspace(current_pose[0] - torch.pi / 2, current_pose[0] + torch.pi / 2, K, device=A_est.device)
         linex = torch.linspace(current_pose[1] - pixels / 2, current_pose[1] + pixels / 2, p,
@@ -51,7 +52,7 @@ def Calculate_linespaces(current_pose, step, img_size, A_est):
 
     elif step <= 3:
         # Steps 2-3: Narrow angle and position range
-        K = 45
+        K = C.K_angles.K2.value
         p = int(p / 2)
         angles = torch.linspace(current_pose[0] - torch.pi / 4, current_pose[0] + torch.pi / 4, K, device=A_est.device)
         linex = torch.linspace(int(current_pose[1] - pixels / 4), int(current_pose[1] + pixels / 4), p,
@@ -62,7 +63,7 @@ def Calculate_linespaces(current_pose, step, img_size, A_est):
 
     elif step <= 8:
         # Steps 4-8: Further reduction in search space
-        K = 45
+        K = C.K_angles.K3.value
         p = int(p / 2)
         angles = torch.linspace(current_pose[0] - torch.pi / 8, current_pose[0] + torch.pi / 8, K, device=A_est.device)
         linex = torch.linspace(int(current_pose[1] - pixels / 4), int(current_pose[1] + pixels / 4), p,
@@ -73,8 +74,8 @@ def Calculate_linespaces(current_pose, step, img_size, A_est):
 
     elif step <= 25:
         # Steps 9-25: Even finer adjustments
-        K = 23
-        p = int(p / 2)
+        K = C.K_angles.K4.value
+        p = int(p / 4)
         angles = torch.linspace(current_pose[0] - torch.pi / 16, current_pose[0] + torch.pi / 16, K,
                                 device=A_est.device)
         linex = torch.linspace(int(current_pose[1] - pixels / 16), int(current_pose[1] + pixels / 16), p,
@@ -85,8 +86,8 @@ def Calculate_linespaces(current_pose, step, img_size, A_est):
 
     else:
         # Final step: Very fine adjustments
-        K = 10
-        p = int(p / 2)
+        K = C.K_angles.K5.value
+        p = int(p / 4)
         angles = torch.linspace(current_pose[0] - torch.pi / 32, current_pose[0] + torch.pi / 32, K,
                                 device=A_est.device)
         linex = torch.linspace(int(current_pose[1] - pixels / 16), int(current_pose[1] + pixels / 16), p,
