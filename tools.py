@@ -1,7 +1,8 @@
-import torch
+
 import mrcfile
 import numpy as np
 import Config as C
+import os
 
 def normalize(tensor):
     """Normalize a tensor to [0,1] range."""
@@ -99,19 +100,23 @@ def Calculate_linespaces(current_pose, step, img_size, A_est):
     return [angles, linex, liney, lineScale, K, p]
 
 
-def get_data_list(index_list, image_name):
-    """Load and normalize items from the data."""
+def get_data_list(index_list, folder_path):
+    """Load and normalize selected images from the given folder."""
+    file_list = sorted([f for f in os.listdir(folder_path) if f.endswith('.mrc')])
     arr = []
     for i in index_list:
-        img = mrcfile.read(f'./output/{image_name + str(i)}.mrc')
+        file_path = os.path.join(folder_path, file_list[i])
+        img = mrcfile.read(file_path)
         arr.append(normalize(img))
-
     return arr
-def get_mean_img(total_samples, image_name):
-    """create a mean of all images."""
+
+def get_mean_img(total_samples, folder_path):
+    """Create a normalized mean image from the first N images in the folder."""
+    file_list = sorted([f for f in os.listdir(folder_path) if f.endswith('.mrc')])
     arr = []
     for i in range(total_samples):
-        img = mrcfile.read(f'./output/{image_name + str(i)}.mrc')
+        file_path = os.path.join(folder_path, file_list[i])
+        img = mrcfile.read(file_path)
         arr.append(normalize(img))
     stack = np.stack(arr, axis=0)
     return normalize(np.mean(stack, axis=0))

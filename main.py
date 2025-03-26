@@ -1,218 +1,191 @@
-import mrcfile
+
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-import random
 import torchvision.transforms.functional as TF
-import torch.nn.functional as F
+import gc
+import tools as t
+import time
 
-# def generate_transformed_images(A_est, linex, liney, angles):
-#
-#     # Ensure A_est has batch & channel dimensions
-#     A_est = A_est.unsqueeze(0).unsqueeze(0)  # Shape: (1, 1, H, W)
-#
-#     K, J, I = len(angles), len(liney), len(linex)
-#     H, W = A_est.shape[-2], A_est.shape[-1]  # Image dimensions
-#
-#     # Storage for results
-#     R_phi_ijk_A = torch.zeros((K, J, I, H, W), device=A_est.device)
-#
-#     # Normalize shifts for grid_sample
-#     shift_x = linex / (W / 2)  # Normalize shift_x to [-1, 1] range
-#     shift_y = liney / (H / 2)  # Normalize shift_y to [-1, 1] range
-#
-#     for k in range(K):
-#         # Apply rotation to A_est
-#         rotated_A = TF.rotate(A_est, angles[k].item(), interpolation=TF.InterpolationMode.BILINEAR)
-#
-#         for j in range(J):
-#             for i in range(I):
-#                 # Create affine transformation matrix for translation
-#                 affine_matrix = torch.tensor([[1.0, 0.0, shift_x[i]],  # X translation
-#                                               [0.0, 1.0, shift_y[j]]],  # Y translation
-#                                               device=A_est.device, dtype=torch.float32)  # Ensure float32
-#                 affine_matrix = affine_matrix.unsqueeze(0)  # Shape: (1, 2, 3)
-#
-#                 # Generate affine grid
-#                 grid = F.affine_grid(affine_matrix, rotated_A.shape, align_corners=True)
-#
-#                 # Apply transformation (translation)
-#                 transformed = F.grid_sample(rotated_A, grid, mode="bilinear", padding_mode="zeros", align_corners=True)
-#
-#                 # Store result after removing batch & channel dimensions
-#                 R_phi_ijk_A[k, j, i] = transformed.squeeze(0).squeeze(0)
-#
-#     return R_phi_ijk_A
-
-def estimate_transformations(X_list, A_init, lr=0.001, epochs=50, batch_size=10):
-    """Estimate transformations using PyTorch SGD optimization with mini-batch training."""
-
-    num_images = len(X_list)
-    sigma = 0.1
+def calculate_const(A_init, sigma, sigma_moves, alpha, beta):
+    """calculate constant in the loss function that always similar"""
+    J = np.shape(A_init)[0] * np.shape(A_init)[1]
+    return (
+            J * torch.log(1 / (sigma * torch.sqrt(torch.tensor(2, dtype=torch.float32) * torch.pi))) +
+            (2 * torch.log(1 / (2 * sigma_moves * torch.pi))) -
+            torch.log(torch.lgamma(alpha).exp() * torch.lgamma(beta).exp() / torch.lgamma(alpha + beta).exp())
+    )
+def estimate_transformations(image_name, A_init, lr=0.001, epochs=50, batch_size=2, sigma=0.1, total_samples=50):
+    """Optimized transformation estimation with mini-batch Stochastic Gradient Descent (SGD).
+    This function estimates a transformation matrix `A_est` by iteratively minimizing a loss function."""
     A_est = torch.nn.Parameter(torch.tensor(A_init, dtype=torch.float32, requires_grad=True))
 
-    sigma_moves = torch.tensor(0.05 * np.shape(A_init)[0], dtype=torch.float32)
-    print("Start SGD")
+    # Get the image size (assuming a square image)
+    img_size = A_init.shape[0]
 
-    K = 180
-    angles = torch.linspace(0, 2 * torch.pi, K, device=A_est.device)
+    # Initialize the best transformation poses for each sample
+    # Each pose consists of [rotation_angle, x_shift, y_shift, scale]
+    best_poses = [[0,0,0,1]] * total_samples
 
-    pixels = int(0.1 * A_init.shape[0])
-    linex = torch.linspace(-pixels, pixels, pixels, device=A_est.device)
-    liney = torch.linspace(-pixels, pixels, pixels, device=A_est.device)
+    # Define parameters for translation variance and scale priors
+    sigma_moves = torch.tensor(0.05 * img_size, dtype=torch.float32)
+    alpha = torch.tensor(2, dtype=torch.float32)
+    beta = torch.tensor(5, dtype=torch.float32)
 
-    # Compute PDF correctly
-    PDF = comput_PDF(linex, liney, A_init.shape[0], sigma_moves)
+    Const_in_loss = calculate_const(A_init, sigma, sigma_moves, alpha, beta)
 
+    # Initialize the optimizer (SGD with momentum)
     optimizer = torch.optim.SGD([A_est], lr=lr, momentum=0.6)
+    steps = int(total_samples / batch_size)
+    step_total_loss = 0
+    total_loss = 0
 
-    J = np.shape(A_init)[0] * np.shape(A_init)[1]
-    Const_in_loss = (
-            J * torch.log(1 / (sigma * torch.sqrt(torch.tensor(2, dtype=torch.float32) * torch.pi))) +
-            (2 * torch.log(1 / (2 * sigma_moves * torch.pi)))
-         #   torch.log(2 * torch.pi / torch.tensor(K, dtype=torch.float32))
-    )
+    # Training loop over epochs
+    for e in range(epochs):
+        print(f"Epoch number: {e}")
 
-    min_loss = float('inf')
-    best_A = None
-    step_best = 0
+        # Early stopping: Stop training if the relative change in loss is below the threshold (convergence check)
+        if step_total_loss != 0 and abs(total_loss - step_total_loss) / abs(step_total_loss) < 1e-6:
+            return A_est.detach()
+        step_total_loss = total_loss
+        total_loss = 0
 
-    for step in range(epochs):
-        print(f"Epoch {step}")
-        optimizer.zero_grad()
+        # Iterate over mini-batches
+        for step in range(steps):
+            optimizer.zero_grad()# Reset gradients
 
-        batch_indices = random.sample(range(num_images), batch_size)
-        batch_X = [X_list[j] for j in batch_indices]
+            # Load mini-batch data from the dataset
+            batch_X = t.get_data_list(range(step*batch_size, (step+1)*batch_size), image_name)
 
-        loss = loss_function(batch_X, A_est, angles, linex, liney, PDF, sigma, Const_in_loss, K, pixels)
+            # Extract corresponding best transformation poses for the batch
+            Pose_X = best_poses[step*batch_size : (step+1)*batch_size]
 
-        loss.backward()
-        optimizer.step()
+            # Compute the loss and updated transformation poses
+            loss, pose = loss_function(batch_X, A_est, sigma, Const_in_loss, e, img_size, sigma_moves, alpha, beta, Pose_X)
 
-        with torch.no_grad():
-            if abs(loss.item()) < min_loss:
-                min_loss = abs(loss.item())
-                best_A = A_est.detach().clone()
-                step_best = step
+            # Update best transformation poses based on the new pose estimates
+            for i in range(batch_size):
+                if len(pose[i])>0:
+                    best_poses[step*batch_size + i] = pose[i]
+            loss.backward()# Backpropagate gradients
+            optimizer.step()# Perform an optimization step (update A_est)
 
-        print(f"Step {step}: loss = {loss.item()}")
-
-    print(f"Step best {step_best}: loss = {min_loss}")
-    return best_A.detach()
-
-
-
-def comput_PDF(x, y, image_size, sigma_):
-    """Precompute a 2D probability density function (PDF)."""
+            total_loss += (loss.item() / steps)
+    # Return the final estimated transformation after normalizing it
+    return t.normalize(A_est.clone().detach())
 
 
-    PDF = torch.zeros((len(x), len(y)), dtype=torch.float32)
-    for x_i, y_i in zip(range(len(x)), range(len(y))):
-        PDF[x_i, y_i] = (x[x_i]**2 + y[y_i]**2)/(2*sigma_**2)
+def loss_function(X_list, A_est, sigma, Const_in_loss, step, img_size, sigma_moves, alpha, beta, best_poses):
+    """Compute loss function using optimized transformations.
 
+    This function estimates the transformation loss by comparing transformed versions
+    of `A_est` with images in `X_list`, considering rotations, translations, and scaling.
 
-    return PDF
+    Args:
+        X_list (list): List of input images.
+        A_est (torch.Tensor): Current estimated transformation matrix.
+        sigma (float): Standard deviation for Gaussian likelihood.
+        Const_in_loss (torch.Tensor): Precomputed normalization constants.
+        step (int): Current training step (affects transformation search space).
+        img_size (int): Size of the input images.
+        sigma_moves (torch.Tensor): Standard deviation for translation.
+        alpha (torch.Tensor): Beta distribution parameter (scaling prior).
+        beta (torch.Tensor): Beta distribution parameter (scaling prior).
+        best_poses (list): Previously estimated best transformation poses.
 
-#
-# def loss_function(X_list, A_est, angles, linex, liney,   sigma,sigmaMoves,Const_in_loss, grid):
-#     """Compute loss function between transformed A and X_list images."""
-#
-#     loss = torch.tensor([0], dtype=torch.float32, device=A_est.device)
-#
-#     num_images = len(X_list)
-#
-#     x = linex  # Shape: (N,)
-#     y = liney  # Shape: (M,)
-#
-#     # Compute the coordinate terms
-#     x_term = - (x ** 2) - (y ** 2) / (2 * sigmaMoves ** 2)  # Shape: (N,)
-#     # Shape: (M,)
-#
-#     # Reshape for broadcasting
-#     x_term = x_term.view(1, 1, -1)  # Shape: (N,1)
-#     print(x_term.shape)
-#     sigma = torch.tensor(sigma)
-#     for I in X_list:
-#         # Compute the norm term || I - R_phi_ijk A ||
-#         I = torch.tensor(I,  dtype=torch.float32)
-#         norm_term = -torch.norm(I - grid, dim= 2) / (2 * sigma ** 2)
-#
-#
-#         # Combine the terms
-#         E = norm_term + x_term   # Should align with i, j, k dimensions
-#         loss += (torch.logsumexp(E, dim=(0, 1, 2)).detach())
-#     return Const_in_loss + loss
+    Returns:
+        tuple: (loss value, list of best transformation parameters for each image)
+    """
 
-def loss_function(X_list, A_est, angles, linex, liney, PDF, sigma, Const_in_loss, K, pixel):
-    """Compute loss function between transformed A and X_list images."""
+    loss = torch.tensor(0.0, dtype=torch.float32, device=A_est.device)
+    min_pose = []
+    img_num = 0
+    # Iterate over all images in the given batch
+    for I in X_list:
 
-    loss = torch.tensor([0], dtype=torch.float32, device=A_est.device)  # Prevent log(0)
-    a_list = []
+        # Compute transformation search space (angles, translations, scaling)
+        [angles, linex, liney, lineScale, K, p] = t.Calculate_linespaces(best_poses[img_num], step, img_size, A_est)
 
-    num_images = len(X_list)
-    rotated_images = [TF.rotate(A_est.unsqueeze(0), angle=float(angle * (180 / torch.pi)),
-                                interpolation=TF.InterpolationMode.BILINEAR) for angle in angles]
-
-    for i in range(num_images):
-        t2 = torch.tensor(np.array(X_list[i]), dtype=torch.float32, device=A_est.device).unsqueeze(0)
-
+        # Update the constant term in the loss function
+        Const_in_loss += (2 * torch.log(1 / torch.tensor(p, dtype=torch.float32)) +
+                          torch.log(2 * torch.pi / torch.tensor(K, dtype=torch.float32)) +
+                          torch.log(1 / torch.tensor(3, dtype=torch.float32))
+                          )
+        # Generate rotated versions of A_est for all specified angles
+        rotated_images = torch.stack([
+            TF.rotate(A_est.unsqueeze(0), angle=float(angle * (180 / torch.pi)),
+                      interpolation=TF.InterpolationMode.BILINEAR)
+            for angle in angles
+        ])
+        min_value = float('inf')
+        tmp_pose = []
+        t2 = torch.as_tensor(I, dtype=torch.float32, device=A_est.device).unsqueeze(0)
+        norm_diffs = []
+        index_angle = 0
+        # Iterate over all rotated versions of A_est
         for transformed_A in rotated_images:
-            for x, y in zip(linex, liney):
-                x_idx = torch.clamp(x - linex.min(), 0, PDF.shape[0] - 1).long()
-                y_idx = torch.clamp(y - liney.min(), 0, PDF.shape[1] - 1).long()
+            for x in linex:# Iterate over x translations
+                for y in liney:# Iterate over y translations
+                    shifted_A = torch.roll(transformed_A, shifts=(int(x.item()), int(y.item())), dims=(1, 2))
+                    for scale in lineScale:
+                        scaled_A = scale * shifted_A
 
-                # Apply shift
-                shifted_A = torch.roll(transformed_A, shifts=(int(x.item()), int(y.item())), dims=(1, 2))
+                        # Compute the squared norm difference between the transformed and original image
+                        norm_diff = torch.linalg.matrix_norm(t2 - scaled_A) ** 2
 
-                # Compute term inside log-sum-exp
-                norm_diff = torch.linalg.matrix_norm((t2 - transformed_A)) ** 2
-                a = (-norm_diff / (2 * sigma ** 2))+PDF[x_idx][y_idx]
-                a_list.append(a)
+                        # Compute loss component considering:
+                        # - Rotation (norm_diff)
+                        # - Translation penalty ((x^2 + y^2) term)
+                        # - Scale prior (log Beta distribution term)
+                        a = ((-norm_diff / (2 * sigma ** 2)) -
+                             ((x ** 2 + y ** 2) / (2 * sigma_moves ** 2)) +
+                             torch.log((scale ** (alpha - 1)) * ((1 - scale) ** (beta - 1))))
+                        norm_diffs.append(a.clone())
 
-    # Convert to tensor and apply logsumexp safely
-    a_stack = torch.stack(a_list)
-    #min_val = torch.min(a_stack)
-    loss = torch.logsumexp(a_stack, dim=0)
+                        # Update best transformation parameters if current loss is smaller
+                        if abs(a) < min_value:
+                            min_value = abs(a)
+                            tmp_pose = [angles[index_angle],x,y,scale]
+            index_angle += 1
+        norm_diffs = torch.stack(norm_diffs)
+        max_val = torch.max(norm_diffs)
+        min_pose.append(tmp_pose)
 
-    return Const_in_loss + loss
+        # Compute loss contribution for this image using the log-sum-exp trick
+        loss += ((torch.logsumexp(norm_diffs - max_val, dim=0).squeeze() - max_val) + Const_in_loss.squeeze())
+        img_num += 1
+    # Return the total loss and the best transformation parameters
+    return [loss, min_pose]
 
+def runAlgo(lr, sigma, epochs, batch_size, image_name, total_samples):
+    start = time.time()
 
-def Get_data(image_name):
-    """Load and normalize dataset."""
-    arr = []
-    for i in range(100):
-        img = mrcfile.read(f'/mnt/c/Users/noyga/PycharmProjects/SGD_Images/output/{image_name + str(i)}.mrc')
-        arr.append(normalize(img))
+    data = t.get_data_list([8], image_name)[0]
+    A_init = t.get_mean_img(total_samples, image_name)
+    gc.collect()
+    # lr = input("Enter learning rate: (Recommended value: (0.001-0.004) higher for less details images):")
+    # epochs = input("Enter number of epochs: (Recommended 50):")
+    # batch_size = input("Enter batch size: (Recommended 2 for small CPU):")
 
-    return arr
-
-
-def normalize(tensor):
-    """Normalize a tensor to [0,1] range."""
-    max =tensor.max()
-    min = tensor.min()
-    if max > 1 or min < 0:
-        return (tensor - min) / (max - min)
-    return tensor
-
-
-if __name__ == '__main__':
-    image_name = 'pikacho2'
-    A_original = plt.imread(image_name+ ".png")
-    images = Get_data(image_name)
-
-    data = images.copy()
-    stack = np.stack(data, axis=0)
-
-    mean_img = normalize(np.mean(stack, axis=0))
-    A_init = mean_img
-
-    A_est = estimate_transformations(images, A_init, epochs=20)
+    A_est = estimate_transformations(image_name, A_init, lr=lr, epochs=epochs, batch_size=batch_size, sigma=sigma,
+                                     total_samples=total_samples)
 
     figure, axis = plt.subplots(1, 2)
     A = A_est.squeeze(0)
+    end = time.time()
 
-    axis[0].imshow(A_init, cmap='gray')
-    axis[1].imshow(A, cmap='gray')
+    print(f"Runtime: {end - start:.4f} seconds")
+
+    axis[0].set(title="Data example1")
+    axis[0].imshow(data, cmap='gray')
+    axis[1].set(title=f"Output: {lr}")
+    axis[1].imshow(A_init, cmap='gray')
 
     plt.show()
+if __name__ == '__main__':
+    #image_name = input('Enter image name:')
+    runAlgo(0.1, 0.001, 100, 1, 'pikacho-S-0.1-', 100)
+    #runAlgo(0.1, 0.1, 50, 1, 'pikacho-S-0.1-', 100)
+   # runAlgo(0.0001, 0.1, 50, 1, 'pikacho-S-0.2-', 100)
+   # runAlgo(0.0001, 0.1, 50, 1, 'pikacho-S-0.5-', 100)
+   # runAlgo(0.0001, 0.1, 50, 1, 'pikacho-S-0.8-', 100)
