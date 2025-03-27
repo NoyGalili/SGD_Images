@@ -3,6 +3,7 @@ import mrcfile
 import numpy as np
 import Config as C
 import os
+from scipy.ndimage import gaussian_filter
 
 def normalize(tensor):
     """Normalize a tensor to [0,1] range."""
@@ -120,3 +121,21 @@ def get_mean_img(total_samples, folder_path):
         arr.append(normalize(img))
     stack = np.stack(arr, axis=0)
     return normalize(np.mean(stack, axis=0))
+
+
+def estimate_noise_by_difference(image, sigma_blur=2):
+    """
+    Estimate noise by subtracting a Gaussian-smoothed image from the original.
+    """
+    smooth = gaussian_filter(image, sigma=sigma_blur)
+    noise = image - smooth
+    return np.std(noise)
+
+def estimate_noise_batch(folder_path):
+    noise_estimates = []
+    for file in sorted(os.listdir(folder_path)):
+        if file.endswith('.mrc'):
+            img = mrcfile.read(os.path.join(folder_path, file))
+            noise = estimate_noise_by_difference(img)
+            noise_estimates.append(noise)
+    return np.mean(noise_estimates)

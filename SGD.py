@@ -1,13 +1,12 @@
-import os
+
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import torchvision.transforms.functional as TF
 import gc
-import tools as t  # assumes get_data_list and get_mean_img now accept folder paths
+import tools as t
 import time
 import Config as C
-
 
 def calculate_const(A_init, sigma, sigma_moves, alpha, beta):
     J = np.shape(A_init)[0] * np.shape(A_init)[1]
@@ -177,8 +176,9 @@ def runAlgo(lr, sigma, epochs, batch_size, folder_path, total_samples):
     axis[1].imshow(A_est, cmap='gray')
     plt.show()
 
-
 if __name__ == '__main__':
+    print(C.total_samples)
     folder_path = input("Please enter folder path for data")
-    sigma = float(input("Please enter an approximate sigma value"))
+    sigma = float(estimate_noise_batch(folder_path))
+    print(sigma)
     runAlgo(C.learning_rate, sigma, C.epochs, C.batch_size, folder_path, C.total_samples)

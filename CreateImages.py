@@ -38,7 +38,7 @@ def create_images (image_name, sigma):
         rotation = np.random.uniform(0, 2 * np.pi)
         translation = np.random.normal(0, 0.05 * image_size, size=2)
         scale = 5 * beta.rvs(2, 5)
-        name = f'./output/pikacho02/{image_name + str(i)}.mrc'
+        name = f'./output/pikacho05/{image_name + str(i)}.mrc'
         X_list.append(
             apply_transformation(A_true, rotation, translation, scale) + sigma * np.random.randn(image_size, image_size))
         data = X_list[i].astype(np.float32)
@@ -50,7 +50,7 @@ def create_images (image_name, sigma):
 # Example usage
 if __name__ == "__main__":
     #create_images('pikacho2', 0.1)
-    create_images('pikacho2', 0.2)
+    create_images('pikacho2', 0.5)
     # create_images('pikacho2', 0.2)
     # create_images('pikacho2', 0.5)
     # create_images('pikacho2', 0.8)
