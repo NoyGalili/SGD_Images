@@ -179,6 +179,6 @@ def runAlgo(lr, sigma, epochs, batch_size, folder_path, total_samples):
 if __name__ == '__main__':
     print(C.total_samples)
     folder_path = input("Please enter folder path for data")
-    sigma = float(estimate_noise_batch(folder_path))
+    sigma = float(t.estimate_noise_batch(folder_path))
     print(sigma)
     runAlgo(C.learning_rate, sigma, C.epochs, C.batch_size, folder_path, C.total_samples)
